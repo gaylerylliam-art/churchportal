@@ -66,6 +66,8 @@ let state = {
   currentUser: JSON.parse(localStorage.getItem("cya-user") || "null"),
   page: location.hash.replace("#", "") || "dashboard",
   filters: {},
+  dashboardExpenseType: "All",
+  dashboardExpenseActivity: "All",
   selectedActivityId: "a2",
   uploadPreview: "",
   mockExtraction: null,
@@ -410,6 +412,11 @@ function dashboardPage() {
       <div class="panel">
         <h3>Notifications</h3>
         <div class="notification-list">${state.notifications.map((item) => `<div class="mini-item"><strong>${item.title}</strong><small>${item.body}</small></div>`).join("")}</div>
+      </div>
+      <div class="panel">
+        <h3>Expense Report Breakdown</h3>
+        ${expenseBreakdownFilters()}
+        ${expensePieChart(filteredDashboardExpenses())}
       </div>
       <div class="panel">
         <h3>Activities Needing Attention</h3>
@@ -870,6 +877,66 @@ function categoryBars() {
   return progressRows(rows);
 }
 
+function expenseBreakdownFilters() {
+  const activities = visibleActivities();
+  const selectedType = state.dashboardExpenseType;
+  const activityOptions = activities
+    .filter((item) => selectedType === "All" || item.category === selectedType)
+    .map((item) => item.title);
+
+  if (state.dashboardExpenseActivity !== "All" && !activityOptions.includes(state.dashboardExpenseActivity)) {
+    state.dashboardExpenseActivity = "All";
+  }
+
+  return `
+    <div class="toolbar compact-toolbar">
+      ${selectField("dashboardExpenseType", "Activity type", ["All", ...new Set(activities.map((item) => item.category))], selectedType)}
+      ${selectField("dashboardExpenseActivity", "Activity name", ["All", ...activityOptions], state.dashboardExpenseActivity)}
+    </div>
+  `;
+}
+
+function filteredDashboardExpenses() {
+  const activityIds = visibleActivities()
+    .filter((item) => state.dashboardExpenseType === "All" || item.category === state.dashboardExpenseType)
+    .filter((item) => state.dashboardExpenseActivity === "All" || item.title === state.dashboardExpenseActivity)
+    .map((item) => item.id);
+
+  return state.expenses.filter((item) => activityIds.includes(item.activityId));
+}
+
+function expensePieChart(expenses) {
+  if (!expenses.length) return `<div class="empty">No expenses match this activity filter.</div>`;
+
+  const grouped = groupBy(expenses, (item) => item.category);
+  const rows = Object.entries(grouped)
+    .map(([name, items]) => ({ name, amount: items.reduce((total, item) => total + item.amount, 0) }))
+    .sort((a, b) => b.amount - a.amount);
+  const total = rows.reduce((amount, item) => amount + item.amount, 0);
+  const colors = ["#2f6f4e", "#c47a2c", "#2f609d", "#b78a18", "#7d5ba6", "#b9423a", "#52796f", "#8a6f3d"];
+  let cursor = 0;
+  const segments = rows.map((item, index) => {
+    const start = cursor;
+    const size = (item.amount / total) * 100;
+    cursor += size;
+    return `${colors[index % colors.length]} ${start}% ${cursor}%`;
+  }).join(", ");
+
+  return `
+    <div class="pie-report">
+      <div class="pie-chart" style="background: conic-gradient(${segments});">
+        <div><strong>${money.format(total)}</strong><small>Total</small></div>
+      </div>
+      <div class="pie-legend">
+        ${rows.map((item, index) => {
+          const pct = Math.round((item.amount / total) * 100);
+          return `<div class="pie-legend-row"><span style="background:${colors[index % colors.length]}"></span><strong>${item.name}</strong><small>${money.format(item.amount)} · ${pct}%</small></div>`;
+        }).join("")}
+      </div>
+    </div>
+  `;
+}
+
 function districtBars() {
   const rows = districts.map((name) => ({ name, amount: sum(state.activities.filter((item) => item.district === name), "actualExpense") })).filter((item) => item.amount > 0);
   return progressRows(rows);
@@ -946,6 +1013,15 @@ function bindGlobal() {
       state.filters[id.replace("Filter", "")] = event.target.value;
       render();
     });
+  });
+  document.querySelector("#dashboardExpenseType")?.addEventListener("change", (event) => {
+    state.dashboardExpenseType = event.target.value;
+    state.dashboardExpenseActivity = "All";
+    render();
+  });
+  document.querySelector("#dashboardExpenseActivity")?.addEventListener("change", (event) => {
+    state.dashboardExpenseActivity = event.target.value;
+    render();
   });
   document.querySelector("#clearFilters")?.addEventListener("click", () => {
     state.filters = {};
